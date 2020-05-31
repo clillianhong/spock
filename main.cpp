@@ -1,5 +1,6 @@
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 
 #include <iostream>
 #include <fstream>
@@ -9,6 +10,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdint>
+#include <array>
 #include <optional>
 #include <set>
 
@@ -23,6 +25,60 @@ const std::vector<const char*> validationLayers = {
 
 const std::vector<const char*> deviceExtensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME
+};
+
+/** Data struct for representing a vertex **/
+struct Vertex {
+    glm::vec2 pos; 
+    glm::vec3 color; 
+
+    /*Vertex Binding: describes the rate of loading data from memory through the vertices. 
+    specifies: 
+    - # of bytes between data entries 
+    - Whether to move to next data entry after each vertex or each instance */
+    static VkVertexInputBindingDescription getBindingDescription() {
+        VkVertexInputBindingDescription bindingDescription{};
+        bindingDescription.binding = 0; // index of the binding in the array of bindings
+        bindingDescription.stride = sizeof(Vertex); // the number of bytes from one entry to the next
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX; //Move to the next data entry after each vertex
+        return bindingDescription;
+    }
+
+    /**
+    Attribute Description: Describes, for each attribute, how to extract the vertex attribute from
+    the parcel of vertex data inside a binding description. 
+    attributes: 
+    - position 
+    - color 
+    **/
+    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+        //position attribute
+        attributeDescriptions[0].binding = 0; //which binding does the data come from 
+        attributeDescriptions[0].location = 0; //location = the location specified w/i shader 
+        /* this is a little weird bc the color formats encode the data types
+        so VK_FORMAT_R32G32_SFLOAT actually means vec2
+        the meaning is: # of channels >= number of components in shader */
+        attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT; //the type of data for the attribute 
+        /*The binding is loading one Vertex at a time and the position attribute (pos) is 
+        at an offset of 0 bytes from the beginning of this struct. */
+        attributeDescriptions[0].offset = offsetof(Vertex, pos); //# of bytes since the start of the data read 
+
+        //color attribute 
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        return attributeDescriptions;
+    }
+};
+
+const std::vector<Vertex> vertices = {
+    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 };
 
 #ifdef NDEBUG
@@ -134,6 +190,7 @@ private:
         createGraphicsPipeline();
         createFramebuffers();
         createCommandPool();
+        createVertexBuffer();
         createCommandBuffers();
         createSyncObjects();
     }
@@ -483,9 +540,15 @@ private:
 
         VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
+        auto bindingDescription = Vertex::getBindingDescription(); 
+        auto attributeDescriptions = Vertex::getAttributeDescriptions(); 
+
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount = 0;
+        vertexInputInfo.vertexBindingDescriptionCount = 1; //number of bindings 
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
         vertexInputInfo.vertexAttributeDescriptionCount = 0;
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -607,6 +670,13 @@ private:
         if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
             throw std::runtime_error("failed to create command pool!");
         }
+    }
+
+    /** Creates a vertex buffer*/
+    void createVertexBuffer() {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = sizeof(vertices[0]) * vertices.size(); //the size of the buffer, in bytes 
     }
 
     void createCommandBuffers() {
