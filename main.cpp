@@ -1,4 +1,6 @@
 #define GLFW_INCLUDE_VULKAN
+#define VMA_IMPLEMENTATION
+#include "vk_mem_alloc.h"
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 
@@ -76,7 +78,7 @@ struct Vertex {
 };
 
 const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
     {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
     {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
 };
@@ -161,6 +163,14 @@ private:
     std::vector<VkFence> imagesInFlight;
     size_t currentFrame = 0;
 
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
+    VmaAllocation vertexBufferAllocation;
+    VkDeviceSize bufferSize;
+
+    //virtual memory allocator 
+    VmaAllocator allocator; 
+
     bool framebufferResized = false;
 
     void initWindow() {
@@ -184,6 +194,7 @@ private:
         createSurface();
         pickPhysicalDevice();
         createLogicalDevice();
+        createVirtualMemoryAllocator();
         createSwapChain();
         createImageViews();
         createRenderPass();
@@ -193,6 +204,8 @@ private:
         createVertexBuffer();
         createCommandBuffers();
         createSyncObjects();
+
+        
     }
 
     void mainLoop() {
@@ -202,6 +215,14 @@ private:
         }
 
         vkDeviceWaitIdle(device);
+    }
+
+    void createVirtualMemoryAllocator() {
+        VmaAllocatorCreateInfo allocatorInfo = {};
+        allocatorInfo.physicalDevice = physicalDevice;
+        allocatorInfo.device = device;
+        allocatorInfo.instance = instance;
+        vmaCreateAllocator(&allocatorInfo, &allocator);
     }
 
     void cleanupSwapChain() {
@@ -225,6 +246,12 @@ private:
     void cleanup() {
         cleanupSwapChain();
 
+        //destroy vertexBuffer
+        vmaDestroyBuffer(allocator, vertexBuffer, vertexBufferAllocation);
+        vmaDestroyAllocator(allocator);
+        //vkDestroyBuffer(device, vertexBuffer, nullptr);
+        //vkFreeMemory(device, vertexBufferMemory, nullptr);
+
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
             vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
@@ -232,7 +259,6 @@ private:
         }
 
         vkDestroyCommandPool(device, commandPool, nullptr);
-
         vkDestroyDevice(device, nullptr);
 
         if (enableValidationLayers) {
@@ -549,7 +575,6 @@ private:
         vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
         vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
         vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
-        vertexInputInfo.vertexAttributeDescriptionCount = 0;
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -636,7 +661,47 @@ private:
         vkDestroyShaderModule(device, fragShaderModule, nullptr);
         vkDestroyShaderModule(device, vertShaderModule, nullptr);
     }
+    /**abstraction for buffer creation **/
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VmaAllocation& allocation) {
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = size;
+        bufferInfo.usage = usage;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        
+        VmaAllocationCreateInfo allocInfo = {};
+        allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        allocInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        allocInfo.preferredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+       
+        allocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
+        uint32_t memoryTypeIndex; 
+        vmaFindMemoryTypeIndexForBufferInfo(allocator, &bufferInfo, &allocInfo, &memoryTypeIndex);
+        allocInfo.memoryTypeBits = 1u << memoryTypeIndex; 
+        
+        vmaCreateBuffer(allocator, &bufferInfo, &allocInfo, &buffer, &allocation, nullptr);
+        
+        /*
+        if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create buffer!");
+        }
+
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+
+        VkMemoryAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+        if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+            throw std::runtime_error("failed to allocate buffer memory!");
+        }
+
+        vkBindBufferMemory(device, buffer, bufferMemory, 0);
+        */
+    }
     void createFramebuffers() {
         swapChainFramebuffers.resize(swapChainImageViews.size());
 
@@ -672,11 +737,105 @@ private:
         }
     }
 
-    /** Creates a vertex buffer*/
+    /** Creates a vertex buffer
+    
+    Put data in a staging buffer with CPU accessible memory 
+    Initialize real vertexBuffer with local high performance memory, easily accessible by graphics card 
+    Copy data from staging buffer into the vertexBuffer using copy command buffer 
+    */
     void createVertexBuffer() {
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = sizeof(vertices[0]) * vertices.size(); //the size of the buffer, in bytes 
+        bufferSize = sizeof(vertices[0]) * vertices.size();
+
+        VkBuffer stagingBuffer;
+        //VkDeviceMemory stagingBufferMemory;
+        VmaAllocation stagingBufferAllocation;
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferAllocation);
+
+        void* data;
+
+        void* mappedData;
+        vmaMapMemory(allocator, stagingBufferAllocation, &mappedData);
+        memcpy(mappedData, vertices.data(), (size_t)bufferSize);
+        vmaUnmapMemory(allocator, stagingBufferAllocation);
+
+        /*  
+        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, vertices.data(), (size_t)bufferSize);
+        vkUnmapMemory(device, stagingBufferMemory);
+        */
+      
+        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | 
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+            vertexBuffer, vertexBufferAllocation);
+
+        //copy data from stagingBuffer into vertexBuffer 
+        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+        //cleanup stagingBuffer after transfer 
+        vmaDestroyBuffer(allocator, stagingBuffer, stagingBufferAllocation);
+        //vmaFlushAllocation(allocator, stagingBufferAllocation, 0, bufferSize);
+        //vmaInvalidateAllocation(allocator, stagingBufferAllocation, 0, bufferSize);
+        //vkFreeMemory(device, stagingBufferMemory, nullptr);
+    
+    }
+
+    /**Copies the contents of srcBuffer into dstBuffer **/
+    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+        //create temp short lived command buffer for the memory transfer 
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandPool = commandPool;
+        allocInfo.commandBufferCount = 1;
+
+        VkCommandBuffer commandBuffer;
+        vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+        //record command buffer
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+        //detail transfer 
+        VkBufferCopy copyRegion{};
+        copyRegion.srcOffset = 0; // Optional
+        copyRegion.dstOffset = 0; // Optional
+        copyRegion.size = size;
+        vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+        vkEndCommandBuffer(commandBuffer);
+
+        //execute command buffer 
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &commandBuffer;
+
+        vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+        vkQueueWaitIdle(graphicsQueue);
+
+        //cleanup
+        vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+    }
+    /** helper for createVertexBuffer()
+    typeFilter : the bit field of suitable memory types 
+    properties : special features of the memory (ex: writable from CPU, indicated w/ VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+    **/
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+        //query info about the available memory types
+        VkPhysicalDeviceMemoryProperties memProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+        //find a memory type that suits the buffer 
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+            if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("failed to find suitable memory type!");
+
     }
 
     void createCommandBuffers() {
@@ -714,8 +873,12 @@ private:
             vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
             vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-
-            vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+            
+            //bind the vertex buffer for rendering operations 
+            VkBuffer vertexBuffers[] = { vertexBuffer };
+            VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+            vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
             vkCmdEndRenderPass(commandBuffers[i]);
 
