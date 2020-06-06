@@ -681,26 +681,7 @@ private:
         allocInfo.memoryTypeBits = 1u << memoryTypeIndex; 
         
         vmaCreateBuffer(allocator, &bufferInfo, &allocInfo, &buffer, &allocation, nullptr);
-        
-        /*
-        if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create buffer!");
-        }
-
-        VkMemoryRequirements memRequirements;
-        vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
-
-        VkMemoryAllocateInfo allocInfo{};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;
-        allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
-
-        if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
-            throw std::runtime_error("failed to allocate buffer memory!");
-        }
-
-        vkBindBufferMemory(device, buffer, bufferMemory, 0);
-        */
+    
     }
     void createFramebuffers() {
         swapChainFramebuffers.resize(swapChainImageViews.size());
@@ -747,7 +728,6 @@ private:
         bufferSize = sizeof(vertices[0]) * vertices.size();
 
         VkBuffer stagingBuffer;
-        //VkDeviceMemory stagingBufferMemory;
         VmaAllocation stagingBufferAllocation;
         createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferAllocation);
@@ -759,12 +739,7 @@ private:
         memcpy(mappedData, vertices.data(), (size_t)bufferSize);
         vmaUnmapMemory(allocator, stagingBufferAllocation);
 
-        /*  
-        vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
-        memcpy(data, vertices.data(), (size_t)bufferSize);
-        vkUnmapMemory(device, stagingBufferMemory);
-        */
-      
+ 
         createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | 
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
             vertexBuffer, vertexBufferAllocation);
@@ -774,10 +749,6 @@ private:
 
         //cleanup stagingBuffer after transfer 
         vmaDestroyBuffer(allocator, stagingBuffer, stagingBufferAllocation);
-        //vmaFlushAllocation(allocator, stagingBufferAllocation, 0, bufferSize);
-        //vmaInvalidateAllocation(allocator, stagingBufferAllocation, 0, bufferSize);
-        //vkFreeMemory(device, stagingBufferMemory, nullptr);
-    
     }
 
     /**Copies the contents of srcBuffer into dstBuffer **/
