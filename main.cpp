@@ -661,7 +661,7 @@ private:
         vkDestroyShaderModule(device, fragShaderModule, nullptr);
         vkDestroyShaderModule(device, vertShaderModule, nullptr);
     }
-    /**abstraction for buffer creation **/
+    /**abstraction function for buffer creation **/
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VmaAllocation& allocation) {
         VkBufferCreateInfo bufferInfo{};
         bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -670,15 +670,14 @@ private:
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         
         VmaAllocationCreateInfo allocInfo = {};
-        allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
         allocInfo.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
         allocInfo.preferredFlags = VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
-       
         allocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
         uint32_t memoryTypeIndex; 
         vmaFindMemoryTypeIndexForBufferInfo(allocator, &bufferInfo, &allocInfo, &memoryTypeIndex);
-        allocInfo.memoryTypeBits = 1u << memoryTypeIndex; 
+        allocInfo.memoryTypeBits = 1u << memoryTypeIndex;  //kind of sketchy 
         
         vmaCreateBuffer(allocator, &bufferInfo, &allocInfo, &buffer, &allocation, nullptr);
     
