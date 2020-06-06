@@ -21,6 +21,8 @@ const uint32_t HEIGHT = 600;
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
+
+
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
@@ -78,9 +80,14 @@ struct Vertex {
 };
 
 const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+};
+
+const std::vector<uint16_t> indices = {
+    0, 1, 2, 2, 3, 0
 };
 
 #ifdef NDEBUG
@@ -166,7 +173,14 @@ private:
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
     VmaAllocation vertexBufferAllocation;
-    VkDeviceSize bufferSize;
+
+    VkBuffer indexBuffer;
+    VkDeviceMemory indexBufferMemory;
+    VmaAllocation indexBufferAllocation;
+
+
+    VkDeviceSize vertexBufferSize;
+    VkDeviceSize indexBufferSize;
 
     //virtual memory allocator 
     VmaAllocator allocator; 
@@ -202,6 +216,7 @@ private:
         createFramebuffers();
         createCommandPool();
         createVertexBuffer();
+        createIndexBuffer();
         createCommandBuffers();
         createSyncObjects();
 
@@ -246,11 +261,10 @@ private:
     void cleanup() {
         cleanupSwapChain();
 
-        //destroy vertexBuffer
+        //destroy buffers
         vmaDestroyBuffer(allocator, vertexBuffer, vertexBufferAllocation);
+        vmaDestroyBuffer(allocator, indexBuffer, indexBufferAllocation);
         vmaDestroyAllocator(allocator);
-        //vkDestroyBuffer(device, vertexBuffer, nullptr);
-        //vkFreeMemory(device, vertexBufferMemory, nullptr);
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -724,27 +738,57 @@ private:
     Copy data from staging buffer into the vertexBuffer using copy command buffer 
     */
     void createVertexBuffer() {
-        bufferSize = sizeof(vertices[0]) * vertices.size();
+        vertexBufferSize = sizeof(vertices[0]) * vertices.size();
 
         VkBuffer stagingBuffer;
         VmaAllocation stagingBufferAllocation;
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+        createBuffer(vertexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferAllocation);
 
-        void* data;
 
         void* mappedData;
         vmaMapMemory(allocator, stagingBufferAllocation, &mappedData);
-        memcpy(mappedData, vertices.data(), (size_t)bufferSize);
+        memcpy(mappedData, vertices.data(), (size_t)vertexBufferSize);
         vmaUnmapMemory(allocator, stagingBufferAllocation);
 
  
-        createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | 
+        createBuffer(vertexBufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT |
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
             vertexBuffer, vertexBufferAllocation);
 
         //copy data from stagingBuffer into vertexBuffer 
-        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+        copyBuffer(stagingBuffer, vertexBuffer, vertexBufferSize);
+
+        //cleanup stagingBuffer after transfer 
+        vmaDestroyBuffer(allocator, stagingBuffer, stagingBufferAllocation);
+    }
+
+    /** Creates an index buffer
+
+    Put data in a staging buffer with CPU accessible memory
+    Initialize real vertexBuffer with local high performance memory, easily accessible by graphics card
+    Copy data from staging buffer into the vertexBuffer using copy command buffer
+    */
+    void createIndexBuffer() {
+        indexBufferSize = sizeof(indices[0]) * indices.size();
+
+        VkBuffer stagingBuffer;
+        VmaAllocation stagingBufferAllocation;
+        createBuffer(indexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferAllocation);
+
+        void* mappedData;
+        vmaMapMemory(allocator, stagingBufferAllocation, &mappedData);
+        memcpy(mappedData, indices.data(), (size_t)indexBufferSize);
+        vmaUnmapMemory(allocator, stagingBufferAllocation);
+
+
+        createBuffer(indexBufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            indexBuffer, indexBufferAllocation);
+
+        //copy data from stagingBuffer into vertexBuffer 
+        copyBuffer(stagingBuffer, indexBuffer, indexBufferSize);
 
         //cleanup stagingBuffer after transfer 
         vmaDestroyBuffer(allocator, stagingBuffer, stagingBufferAllocation);
@@ -848,7 +892,9 @@ private:
             VkBuffer vertexBuffers[] = { vertexBuffer };
             VkDeviceSize offsets[] = { 0 };
             vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
-            vkCmdDraw(commandBuffers[i], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+            vkCmdDrawIndexed(commandBuffers[i], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
+
 
             vkCmdEndRenderPass(commandBuffers[i]);
 
