@@ -219,8 +219,6 @@ private:
         createIndexBuffer();
         createCommandBuffers();
         createSyncObjects();
-
-        
     }
 
     void mainLoop() {
@@ -261,9 +259,11 @@ private:
     void cleanup() {
         cleanupSwapChain();
 
-        //destroy buffers
+        //destroy buffers and memory allocations 
         vmaDestroyBuffer(allocator, vertexBuffer, vertexBufferAllocation);
         vmaDestroyBuffer(allocator, indexBuffer, indexBufferAllocation);
+        
+        //destroy allocator 
         vmaDestroyAllocator(allocator);
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -764,10 +764,6 @@ private:
     }
 
     /** Creates an index buffer
-
-    Put data in a staging buffer with CPU accessible memory
-    Initialize real vertexBuffer with local high performance memory, easily accessible by graphics card
-    Copy data from staging buffer into the vertexBuffer using copy command buffer
     */
     void createIndexBuffer() {
         indexBufferSize = sizeof(indices[0]) * indices.size();
@@ -832,6 +828,7 @@ private:
         //cleanup
         vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
     }
+
     /** helper for createVertexBuffer()
     typeFilter : the bit field of suitable memory types 
     properties : special features of the memory (ex: writable from CPU, indicated w/ VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
